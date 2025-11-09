@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  worker:
+    container_name: dubbing-worker
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: dubbing-worker:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - worker-inputs:/app/inputs
+      - worker-interim:/app/interim
+      - worker-outputs:/app/outputs
+    environment:
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
+    gpus: all
+    restart: unless-stopped
+
+volumes:
+  worker-inputs:
+  worker-interim:
+  worker-outputs:
