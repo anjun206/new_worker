@@ -1,6 +1,8 @@
 # translate.py
-import os
 import json
+import shutil
+
+from config import get_job_paths
 
 # 예시용으로 googletrans 사용 (실제 서비스에서는 공식 번역 API로 교체 필요)
 from googletrans import Translator
@@ -10,9 +12,9 @@ translator = Translator()
 
 def translate_transcript(job_id: str, target_lang: str):
     """전사된 구간 텍스트를 지정한 언어로 번역합니다."""
-    job_dir = os.path.join("interim", job_id)
-    transcript_path = os.path.join(job_dir, "transcript.json")
-    if not os.path.isfile(transcript_path):
+    paths = get_job_paths(job_id)
+    transcript_path = paths.src_sentence_dir / "transcript.json"
+    if not transcript_path.is_file():
         raise FileNotFoundError("Transcript not found. Run ASR stage first.")
     with open(transcript_path, "r", encoding="utf-8") as f:
         segments = json.load(f)
@@ -33,7 +35,10 @@ def translate_transcript(job_id: str, target_lang: str):
         translated_segments.append(new_seg)
 
     # 번역 결과 저장
-    trans_out_path = os.path.join(job_dir, "translated.json")
+    trans_out_path = paths.trg_sentence_dir / "translated.json"
     with open(trans_out_path, "w", encoding="utf-8") as f:
         json.dump(translated_segments, f, ensure_ascii=False, indent=2)
+    shutil.copyfile(
+        trans_out_path, paths.outputs_text_dir / "trg_transcript.json"
+    )
     return translated_segments

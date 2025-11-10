@@ -1,29 +1,27 @@
-version: "3.9"
-
 services:
   worker:
     container_name: dubbing-worker
     build:
       context: ./app
       dockerfile: Dockerfile
+      target: runtime
     image: dubbing-worker:latest
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-      - worker-inputs:/app/inputs
-      - worker-interim:/app/interim
-      - worker-outputs:/app/outputs
+      - ./app:/app
+      - ./data:/data
+      - ./models:/models
+    env_file:
+      - .env
     environment:
-      # 호환성 고려해 걍 이름 다 때려박음
-      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_TOKEN:?set HUGGINGFACE_TOKEN in .env}
-      - HF_TOKEN=${HUGGINGFACE_TOKEN}
-      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - UVICORN_RELOAD=${UVICORN_RELOAD---reload}
+      - DATA_DIR=/data
+      - INPUTS_DIR=/data/inputs
+      - INTERIM_DIR=/data/interim
+      - OUTPUTS_DIR=/data/outputs
+      - MODELS_DIR=/models
+      - WHISPERX_CACHE_DIR=/models/.cache/whisperx
+      - XDG_CACHE_HOME=/models/.cache
     gpus: all
     restart: unless-stopped
-
-volumes:
-  worker-inputs:
-  worker-interim:
-  worker-outputs:

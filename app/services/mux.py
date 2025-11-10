@@ -2,36 +2,24 @@
 import os
 import subprocess
 from pydub import AudioSegment
+from config import get_job_paths
 
 
 def mux_audio_video(job_id: str):
     """합성 음성과 배경음을 결합하고 원본 영상에 다시 입혀 최종 영상을 생성합니다."""
-    job_dir = os.path.join("interim", job_id)
-    background_path = os.path.join(job_dir, "background.wav")
-    tts_dir = os.path.join(job_dir, "tts_audio")
-    video_input = None
-    # 저장된 오디오를 바탕으로 어떤 media_id를 사용했는지 역추적
-    audio_path = os.path.join(job_dir, "audio.wav")
-    if os.path.isfile(audio_path):
-        # inputs/<media_id>/source.mp4 구조를 가정하고 해당 media_id를 탐색
-        # 필요 시 job 디렉터리에 media_id 정보를 별도로 저장하는 것이 안전함
-        base = os.path.basename(audio_path)
-        media_id = None
-        for d in os.listdir("inputs"):
-            if base in os.listdir(os.path.join("inputs", d)):
-                media_id = d
-                break
-        if media_id:
-            video_input = os.path.join("inputs", media_id, "source.mp4")
-    if not video_input or not os.path.isfile(video_input):
+    paths = get_job_paths(job_id)
+    background_path = paths.vid_bgm_dir / "background.wav"
+    tts_dir = paths.vid_tts_dir
+    video_input = paths.input_dir / "source.mp4"
+    if not video_input.is_file():
         raise RuntimeError("Original video file not found for muxing.")
-    if not os.path.isfile(background_path):
+    if not background_path.is_file():
         raise FileNotFoundError("Background audio not found. Run Demucs stage.")
-    if not os.path.isdir(tts_dir):
+    if not tts_dir.is_dir():
         raise FileNotFoundError("TTS audio segments not found. Run TTS stage.")
 
     # 배경 오디오 로드
-    background_audio = AudioSegment.from_wav(background_path)
+    background_audio = AudioSegment.from_wav(str(background_path))
     total_duration_ms = len(background_audio)
     # 배경음을 복제해 믹싱의 베이스로 사용
     final_audio = background_audio[:]  # 복제본
@@ -39,7 +27,7 @@ def mux_audio_video(job_id: str):
     # 합성된 음성 구간을 적절한 시작 위치에 오버레이
     for fname in os.listdir(tts_dir):
         if fname.endswith(".wav"):
-            segment_audio = AudioSegment.from_wav(os.path.join(tts_dir, fname))
+            segment_audio = AudioSegment.from_wav(str(tts_dir / fname))
             # 파일명 끝부분에 기록된 시작 시간을 파싱
             try:
                 start_time = float(os.path.splitext(fname)[0].split("_")[-1])
@@ -60,21 +48,21 @@ def mux_audio_video(job_id: str):
         final_audio = final_audio[:total_duration_ms]
 
     # 믹싱된 오디오를 outputs 디렉터리에 저장
-    output_dir = os.path.join("outputs", job_id)
-    os.makedirs(output_dir, exist_ok=True)
-    final_audio_path = os.path.join(output_dir, "dubbed_audio.wav")
-    final_audio.export(final_audio_path, format="wav")
+    output_dir = paths.outputs_vid_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    final_audio_path = output_dir / "dubbed_audio.wav"
+    final_audio.export(str(final_audio_path), format="wav")
 
     # 원본 영상과 새 오디오를 결합
-    output_video_path = os.path.join(output_dir, "dubbed_video.mp4")
+    output_video_path = output_dir / "dubbed_video.mp4"
     # ffmpeg로 영상의 오디오 트랙을 교체
     cmd = [
         "ffmpeg",
         "-y",
         "-i",
-        video_input,
+        str(video_input),
         "-i",
-        final_audio_path,
+        str(final_audio_path),
         "-c:v",
         "copy",
         "-map",
@@ -82,7 +70,10 @@ def mux_audio_video(job_id: str):
         "-map",
         "1:a:0",
         "-shortest",
-        output_video_path,
+        str(output_video_path),
     ]
     subprocess.run(cmd, check=True)
-    return {"output_video": output_video_path, "output_audio": final_audio_path}
+    return {
+        "output_video": str(output_video_path),
+        "output_audio": str(final_audio_path),
+    }

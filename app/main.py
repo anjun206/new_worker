@@ -11,6 +11,7 @@ from services.demucs_split import split_vocals
 from services.translate import translate_transcript
 from services.tts import generate_tts
 from services.mux import mux_audio_video
+from config import ensure_data_dirs, ensure_job_dirs
 
 
 # 문서화를 위한 요청/응답 모델 정의
@@ -36,44 +37,37 @@ app = FastAPI(
 )
 
 # 기본 작업 폴더가 없으면 생성
-os.makedirs("inputs", exist_ok=True)
-os.makedirs("interim", exist_ok=True)
-os.makedirs("outputs", exist_ok=True)
+ensure_data_dirs()
 
 
 @app.post("/asr", response_model=ASRResponse)
 async def asr_endpoint(
-    media_id: str = Form(None),
+    job_id: str = Form(None),
     file: UploadFile = File(None),
-    hf_token: str = Form(None),
 ):
     """
-    새 영상을 업로드하거나 기존 media_id를 지정해 WhisperX로 음성을 추출합니다.
-    새 job_id와 화자 정보가 포함된 전사 구간 목록을 반환합니다.
+    새 영상을 업로드하거나 기존 job_id를 지정해 WhisperX로 음성을 추출합니다.
+    job_id와 화자 정보가 포함된 전사 구간 목록을 반환합니다.
     """
-    # 업로드된 파일이 있으면 inputs/<media_id>/source.mp4 형태로 저장
     if file:
-        if media_id is None:
-            media_id = str(uuid.uuid4())  # media_id가 없으면 새로 생성
-        media_dir = os.path.join("inputs", media_id)
-        os.makedirs(media_dir, exist_ok=True)
-        file_path = os.path.join(media_dir, "source.mp4")
-        with open(file_path, "wb") as f:
+        job_id = job_id or str(uuid.uuid4())
+        paths = ensure_job_dirs(job_id)
+        input_path = paths.input_dir / "source.mp4"
+        with open(input_path, "wb") as f:
             f.write(await file.read())
     else:
-        # 업로드 파일이 없다면 media_id가 기존 입력 영상을 가리켜야 함
-        if media_id is None:
+        if job_id is None:
             return JSONResponse(status_code=400, content={"error": "No media provided"})
-        file_path = os.path.join("inputs", media_id, "source.mp4")
-        if not os.path.isfile(file_path):
+        paths = ensure_job_dirs(job_id)
+        input_path = paths.input_dir / "source.mp4"
+        if not input_path.is_file():
             return JSONResponse(
-                status_code=404, content={"error": f"Media {media_id} not found"}
+                status_code=404,
+                content={"error": f"Input for job {job_id} not found"},
             )
 
-    # 작업 단위 식별을 위한 job_id 생성
-    job_id = str(uuid.uuid4())
     try:
-        segments = run_asr(media_id, job_id, hf_token)
+        segments = run_asr(job_id)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
     return {"job_id": job_id, "segments": segments}
