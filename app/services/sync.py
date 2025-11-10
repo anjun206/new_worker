@@ -11,6 +11,11 @@ from typing import Dict, List
 from pydub import AudioSegment
 
 from config import get_job_paths
+from services.transcript_store import (
+    COMPACT_ARCHIVE_NAME,
+    load_compact_transcript,
+    segment_views,
+)
 
 MAX_SLOW_RATIO = float(os.getenv("SYNC_MAX_SLOW_RATIO", "1.1"))
 LENGTH_TOLERANCE_MS = 20  # 밀리초
@@ -100,19 +105,18 @@ def sync_segments(job_id: str) -> List[Dict]:
     - 길이가 짧다면 최대 1.1배까지 실제 오디오를 스트레치하고 남는 길이는 무음으로 보충
     """
     paths = get_job_paths(job_id)
-    transcript_path = paths.src_sentence_dir / "transcript.json"
+    transcript_path = paths.src_sentence_dir / COMPACT_ARCHIVE_NAME
     tts_meta_path = paths.vid_tts_dir / "segments.json"
     if not transcript_path.is_file():
-        raise FileNotFoundError("원본 전사(transcript.json)를 찾을 수 없습니다.")
+        raise FileNotFoundError(
+            f"원본 전사({COMPACT_ARCHIVE_NAME})를 찾을 수 없습니다."
+        )
     if not tts_meta_path.is_file():
         raise FileNotFoundError("TTS 세그먼트 메타데이터가 없습니다. /tts 단계를 먼저 실행하세요.")
 
-    with open(transcript_path, "r", encoding="utf-8") as f:
-        source_segments = json.load(f)
-    src_lookup = {}
-    for idx, seg in enumerate(source_segments):
-        seg_id = seg.get("segment_id") or f"segment_{idx:04d}"
-        src_lookup[seg_id] = seg
+    bundle = load_compact_transcript(transcript_path)
+    base_segments = segment_views(bundle)
+    src_lookup = {seg.segment_id(): seg for seg in base_segments}
 
     with open(tts_meta_path, "r", encoding="utf-8") as f:
         tts_segments = json.load(f)
@@ -128,8 +132,7 @@ def sync_segments(job_id: str) -> List[Dict]:
         source_seg = src_lookup[seg_id]
         target_duration = float(
             entry.get("target_duration")
-            or source_seg.get("duration")
-            or (source_seg.get("end", 0) - source_seg.get("start", 0))
+            or source_seg.duration_seconds
         )
         target_ms = max(1, int(target_duration * 1000))
 

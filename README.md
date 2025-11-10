@@ -46,13 +46,12 @@ docker build -f app/Dockerfile --target stt-whisperx ./app
 data/
 ├── inputs/<job_id>/source.mp4
 ├── outputs/<job_id>/
-│   ├── text/ (src_transcript.json, trg_transcript.json)
+│   ├── text/ (src_transcript.comp.json.gz, trg_translated.json)
 │   └── vid/ (dubbed_audio.wav, dubbed_video.mp4)
 └── interim/<job_id>/
     └── text/
         ├── src/
-        │   ├── sentence/transcript.json
-        │   └── words/aligned_segments.json
+        │   └── sentence/transcript.comp.json.gz
         ├── trg/
         │   └── sentence/translated.json
         └── vid/
@@ -62,6 +61,36 @@ data/
 ```
 
 각 단계는 위 경로를 사용하며 `/mux` 결과물은 `outputs/<job_id>/vid`에 저장됩니다.
+
+### Compact transcript schema
+
+- STT 단계는 세그먼트/단어 메타데이터를 `transcript.comp.json.gz` 하나에 압축 저장합니다. JSON 구조는 다음과 같습니다.
+  ```json
+  {
+    "v": 1,
+    "speakers": ["SPEAKER_00", "SPEAKER_01"],
+    "segments": [
+      { "s": 1955, "e": 18698, "sp": 0, "txt": "...", "gap": [4519,4519], "w_off": [0,23] }
+    ],
+    "vocab": ["메사추세추주의", "케이프", "..."],
+    "words": [
+      [0, 0, 742, 0, 191],
+      [0, 1163, 1430, 1, 255]
+    ]
+  }
+  ```
+- 시간 단위는 ms이며, `segments[i].w_off = [start,count]`가 평면 `words` 배열의 위치를 가리킵니다.
+- 각 단어 항목은 `[segIdx, segRelativeStart, segRelativeEnd, vocabIdx, scoreQ(0..255)]`입니다.
+- 문자열 ID는 저장하지 않고, 필요 시 `segment_{idx:04d}` 형태로 on-the-fly 생성합니다.
+- 번역 단계 결과(`trg/sentence/translated.json`, `outputs/.../trg_translated.json`)는 `{"seg_idx": int, "translation": str}` 목록만 담고, 나머지 메타데이터는 source compact 파일을 참조합니다.
+
+#### Metadata storage rationale
+
+- **파일 수 최소화**: 세그먼트/단어 JSON을 한데 묶어 S3와 파일시스템 오버헤드를 줄입니다. 키 폭이 늘어나더라도 gzip/zstd 압축으로 충분히 상쇄됩니다.
+- **인덱스 우선 구조**: 화자/어휘/단어는 숫자 인덱스로 참조하여 문자열을 재사용합니다. 필요할 때만 `segment_{idx}` 같은 사람이 읽을 수 있는 ID를 생성하세요.
+- **상대 시간 표현**: 단어 수준 타임스탬프는 세그먼트 시작으로부터의 오프셋만 저장하여 절대시간 중복을 제거합니다. 세그먼트에는 시작·끝(ms)만 남기고 duration은 파생 값입니다.
+- **정규화된 점수**: WhisperX `score`(0~1 float)를 0~255 양자화 값으로 저장합니다. 이 값은 신뢰도 heatmap 등에 직접 사용할 수 있고 필요한 경우 다시 0~1 범위로 복원하면 됩니다.
+- **단일 소스**: `transcript.comp.json.gz`가 모든 언어/자막/단어 정렬의 기준입니다. 파생 산출물(`translated.json`, `segments.json` 등)은 compact 파일의 `seg_idx`나 `segment_id`만 참조하면 됩니다.
 
 ## 모델 다운로드
 

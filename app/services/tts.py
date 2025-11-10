@@ -14,6 +14,11 @@ import torchaudio
 from pydub import AudioSegment
 
 from config import get_job_paths
+from services.transcript_store import (
+    COMPACT_ARCHIVE_NAME,
+    load_compact_transcript,
+    segment_views,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +273,21 @@ def generate_tts(
             "Translated text not found. Run translation stage first."
         )
     with open(trans_path, "r", encoding="utf-8") as f:
-        segments = json.load(f)
+        translation_entries = json.load(f)
+    translation_map: Dict[int, dict] = {}
+    for entry in translation_entries:
+        seg_idx = entry.get("seg_idx")
+        try:
+            idx = int(seg_idx)
+        except (TypeError, ValueError):
+            continue
+        translation_map[idx] = entry
+
+    transcript_archive = paths.src_sentence_dir / COMPACT_ARCHIVE_NAME
+    bundle = load_compact_transcript(transcript_archive)
+    base_segments = segment_views(bundle)
+    if not base_segments:
+        raise RuntimeError("No source segments found. Run ASR stage first.")
 
     vocals_path = paths.vid_speaks_dir / "vocals.wav"
     if not vocals_path.is_file():
@@ -277,7 +296,15 @@ def generate_tts(
 
     tts_dir = paths.vid_tts_dir
     tts_dir.mkdir(parents=True, exist_ok=True)
-    speaker_refs = _prepare_self_reference_samples(vocals_audio, segments, tts_dir)
+    ref_segments = [
+        {
+            "speaker": seg.speaker,
+            "start": seg.start_seconds,
+            "end": seg.end_seconds,
+        }
+        for seg in base_segments
+    ]
+    speaker_refs = _prepare_self_reference_samples(vocals_audio, ref_segments, tts_dir)
 
     normalized_user_sample = None
     if voice_sample_path:
@@ -300,18 +327,32 @@ def generate_tts(
             logger.warning("제공된 보이스 샘플을 찾을 수 없습니다: %s", candidate)
 
     synthesized_segments = []
-    for idx, seg in enumerate(segments):
-        speaker = seg.get("speaker", "unknown_speaker")
-        text = seg.get("translation") or seg.get("text") or ""
-        segment_start = float(seg.get("start", 0.0))
-        segment_end = float(seg.get("end", segment_start))
-        duration = max(0.0, segment_end - segment_start)
+    for seg in base_segments:
+        override = translation_map.get(seg.idx, {})
+        text = override.get("translation") or seg.text
+        speaker = override.get("speaker") or seg.speaker
+        segment_start = seg.start_seconds
+        segment_end = seg.end_seconds
+        duration = max(0.0, seg.duration_seconds)
         output_file = tts_dir / f"{speaker}_{segment_start:.2f}.wav"
 
+        seg_payload = {
+            "speaker": speaker,
+            "text": text,
+            "start": segment_start,
+            "end": segment_end,
+            "voice_sample_path": override.get("voice_sample_path")
+            or override.get("voice_sample"),
+            "voice_sample": override.get("voice_sample"),
+            "prompt_text": override.get("prompt_text") or override.get("prompt"),
+            "reference_text": override.get("reference_text"),
+        }
         effective_sample = _select_voice_sample(
-            seg, speaker_refs, paths, normalized_user_sample
+            seg_payload, speaker_refs, paths, normalized_user_sample
         )
-        prompt_text = _resolve_prompt_text(seg, effective_sample, prompt_text_override)
+        prompt_text = _resolve_prompt_text(
+            seg_payload, effective_sample, prompt_text_override
+        )
         _synthesize_with_cosyvoice2(
             text=text,
             prompt_text=prompt_text,
@@ -321,7 +362,8 @@ def generate_tts(
 
         synthesized_segments.append(
             {
-                "segment_id": seg.get("segment_id") or f"segment_{idx:04d}",
+                "segment_id": seg.segment_id(),
+                "seg_idx": seg.idx,
                 "speaker": speaker,
                 "start": segment_start,
                 "end": segment_end,

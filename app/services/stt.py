@@ -1,6 +1,5 @@
 # stt.py
 import os
-import json
 import logging
 import shutil
 import subprocess
@@ -33,6 +32,12 @@ try:
 except ImportError:  # WhisperX<3.7 fallback
     from whisperx import DiarizationPipeline
 from config import WHISPERX_CACHE_DIR, ensure_job_dirs
+from services.transcript_store import (
+    COMPACT_ARCHIVE_NAME,
+    build_compact_transcript,
+    save_compact_transcript,
+    segment_preview,
+)
 from services.demucs_split import split_vocals
 
 logger = logging.getLogger(__name__)
@@ -137,95 +142,23 @@ def run_asr(job_id: str):
         # 각 구간/단어에 speaker 키가 포함됨
 
     # 6. 문장/단어 메타데이터 정리 및 저장
-    word_dir = paths.src_words_dir
-    for existing in word_dir.glob("segment_*_words.json"):
+    # 7. 새 compact 스키마로 저장
+    bundle = build_compact_transcript(segments, language=result.get("language"))
+    transcript_archive = paths.src_sentence_dir / COMPACT_ARCHIVE_NAME
+    save_compact_transcript(bundle, transcript_archive)
+    shutil.copyfile(
+        transcript_archive,
+        paths.outputs_text_dir / f"src_{COMPACT_ARCHIVE_NAME}",
+    )
+
+    # 레거시 산출물 정리 (존재할 경우)
+    legacy_transcript = paths.src_sentence_dir / "transcript.json"
+    if legacy_transcript.exists():
+        legacy_transcript.unlink()
+    aligned_path = paths.src_words_dir / "aligned_segments.json"
+    if aligned_path.exists():
+        aligned_path.unlink()
+    for existing in paths.src_words_dir.glob("segment_*_words.json"):
         existing.unlink()
 
-    output_segments = []
-    prev_end = None
-    for idx, seg in enumerate(segments):
-        start = float(seg.get("start", 0.0))
-        end = float(seg.get("end", start))
-        text = seg.get("text", "").strip()
-        raw_speaker = seg.get("speaker", "unknown_speaker")
-        speaker = (
-            f"SPEAKER_{raw_speaker}"
-            if isinstance(raw_speaker, int)
-            else str(raw_speaker)
-        )
-        duration = round(max(0.0, end - start), 3)
-        next_start = (
-            float(segments[idx + 1].get("start"))
-            if idx + 1 < len(segments) and segments[idx + 1].get("start") is not None
-            else None
-        )
-        gap_after = round(next_start - end, 3) if next_start is not None else None
-        gap_after_vad = round(max(0.0, gap_after), 3) if gap_after is not None else None
-        is_overlapping = prev_end is not None and start < prev_end
-        prev_end = end if prev_end is None else max(prev_end, end)
-
-        segment_uid = f"segment_{idx:04d}"
-        words = seg.get("words") or []
-        word_ids = []
-        word_entries = []
-        for w_idx, word in enumerate(words):
-            word_start = word.get("start")
-            word_end = word.get("end")
-            word_duration = (
-                round(max(0.0, word_end - word_start), 3)
-                if word_start is not None and word_end is not None
-                else None
-            )
-            word_id = f"{segment_uid}_word_{w_idx:03d}"
-            raw_word_speaker = word.get("speaker")
-            if isinstance(raw_word_speaker, int):
-                word_speaker = f"SPEAKER_{raw_word_speaker}"
-            elif raw_word_speaker:
-                word_speaker = str(raw_word_speaker)
-            else:
-                word_speaker = speaker
-            word_ids.append(word_id)
-            word_entries.append(
-                {
-                    "segment_id": word_id,
-                    "sentence_segment_id": segment_uid,
-                    "start": word_start,
-                    "end": word_end,
-                    "text": (word.get("word") or "").strip(),
-                    "duration": word_duration,
-                    "speaker": word_speaker,
-                }
-            )
-
-        word_file = word_dir / f"{segment_uid}_words.json"
-        with open(word_file, "w", encoding="utf-8") as wf:
-            json.dump(word_entries, wf, ensure_ascii=False, indent=2)
-
-        output_segments.append(
-            {
-                "segment_id": segment_uid,
-                "original_segment_id": seg.get("id", idx),
-                "speaker": speaker,
-                "start": start,
-                "end": end,
-                "text": text,
-                "duration": duration,
-                "gap_after": gap_after,
-                "gap_after_vad": gap_after_vad,
-                "word_ids": word_ids,
-                "word_metadata_file": word_file.name,
-                "is_overlapping": is_overlapping,
-                "asr_score": seg.get("avg_logprob"),
-            }
-        )
-
-    # 7. 전사 결과를 JSON으로 저장
-    transcript_path = paths.src_sentence_dir / "transcript.json"
-    with open(transcript_path, "w", encoding="utf-8") as f:
-        json.dump(output_segments, f, ensure_ascii=False, indent=2)
-    shutil.copyfile(transcript_path, paths.outputs_text_dir / "src_transcript.json")
-    words_path = paths.src_words_dir / "aligned_segments.json"
-    with open(words_path, "w", encoding="utf-8") as f:
-        json.dump(result_aligned, f, ensure_ascii=False, indent=2)
-
-    return output_segments
+    return segment_preview(bundle)
