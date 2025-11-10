@@ -22,6 +22,14 @@ from whisperx import DiarizationPipeline
 
 def run_asr(media_id: str, job_id: str, hf_token: str = None):
     """입력 영상을 WhisperX로 전사하고 화자 분리를 수행합니다."""
+    # 요청에 토큰이 없으면 환경 변수에서 검색 (우선순위: 명시 입력 > 환경)
+    if not hf_token:
+        hf_token = (
+            os.getenv("HF_TOKEN")
+            or os.getenv("HUGGINGFACE_TOKEN")
+            or os.getenv("HUGGINGFACEHUB_API_TOKEN")
+        )
+
     # 파일 경로 구성
     input_video = os.path.join("inputs", media_id, "source.mp4")
     job_dir = os.path.join("interim", job_id)
@@ -44,7 +52,7 @@ def run_asr(media_id: str, job_id: str, hf_token: str = None):
     subprocess.run(extract_cmd, check=True)
 
     # 2. WhisperX 모델을 불러와 전사 수행
-    device = "cuda" if whisperx.utils.get_device() == "cuda" else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = whisperx.load_model(
         "large-v2", device=device
     )  # 정확도를 위해 large 모델 사용
