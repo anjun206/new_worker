@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import uuid
 import os
+from pathlib import Path
 
 # 파이프라인 각 단계를 담당하는 함수 불러오기
 from services.stt import run_asr
@@ -11,6 +12,7 @@ from services.demucs_split import split_vocals
 from services.translate import translate_transcript
 from services.tts import generate_tts
 from services.mux import mux_audio_video
+from services.sync import sync_segments
 from config import ensure_data_dirs, ensure_job_dirs
 
 
@@ -21,11 +23,6 @@ class ASRResponse(BaseModel):
 
 
 class TranslateRequest(BaseModel):
-    job_id: str
-    target_lang: str
-
-
-class TTSRequest(BaseModel):
     job_id: str
     target_lang: str
 
@@ -73,18 +70,6 @@ async def asr_endpoint(
     return {"job_id": job_id, "segments": segments}
 
 
-@app.post("/demucs")
-async def demucs_endpoint(job_id: str):
-    """
-    지정된 job_id의 오디오에서 보컬과 배경음을 분리합니다.
-    """
-    try:
-        result = split_vocals(job_id)
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-    return {"message": "Vocals and background separated", "files": result}
-
-
 @app.post("/translate")
 async def translate_endpoint(request: TranslateRequest):
     """
@@ -104,17 +89,48 @@ async def translate_endpoint(request: TranslateRequest):
 
 
 @app.post("/tts")
-async def tts_endpoint(request: TTSRequest):
+async def tts_endpoint(
+    job_id: str = Form(...),
+    target_lang: str = Form(...),
+    voice_sample: UploadFile | None = File(None),
+    prompt_text: str | None = Form(None),
+):
     """
     지정된 job_id에 대해 각 구간의 번역된 음성을 합성합니다.
     """
-    job_id = request.job_id
-    target_lang = request.target_lang
+    paths = ensure_job_dirs(job_id)
+    user_voice_sample_path = None
+    if voice_sample:
+        custom_ref_dir = paths.interim_dir / "tts_custom_refs"
+        custom_ref_dir.mkdir(parents=True, exist_ok=True)
+        suffix = Path(voice_sample.filename or "voice_sample.wav").suffix or ".wav"
+        user_voice_sample_path = custom_ref_dir / f"user_voice_sample{suffix}"
+        data = await voice_sample.read()
+        with open(user_voice_sample_path, "wb") as f:
+            f.write(data)
+    prompt_text_value = prompt_text.strip() if prompt_text else None
     try:
-        segments = generate_tts(job_id, target_lang)
+        segments = generate_tts(
+            job_id,
+            target_lang,
+            voice_sample_path=user_voice_sample_path,
+            prompt_text_override=prompt_text_value,
+        )
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
     return {"job_id": job_id, "audio_segments": segments}
+
+
+@app.post("/sync")
+async def sync_endpoint(job_id: str = Form(...)):
+    """
+    TTS로 생성된 각 구간 오디오를 원본 화자 길이에 맞춰 동기화합니다.
+    """
+    try:
+        segments = sync_segments(job_id)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+    return {"job_id": job_id, "synced_segments": segments}
 
 
 @app.post("/mux")

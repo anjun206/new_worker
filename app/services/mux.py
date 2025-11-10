@@ -9,7 +9,9 @@ def mux_audio_video(job_id: str):
     """합성 음성과 배경음을 결합하고 원본 영상에 다시 입혀 최종 영상을 생성합니다."""
     paths = get_job_paths(job_id)
     background_path = paths.vid_bgm_dir / "background.wav"
-    tts_dir = paths.vid_tts_dir
+    base_tts_dir = paths.vid_tts_dir
+    synced_dir = base_tts_dir / "synced"
+    tts_dir = synced_dir if synced_dir.is_dir() else base_tts_dir
     video_input = paths.input_dir / "source.mp4"
     if not video_input.is_file():
         raise RuntimeError("Original video file not found for muxing.")
@@ -25,7 +27,12 @@ def mux_audio_video(job_id: str):
     final_audio = background_audio[:]  # 복제본
 
     # 합성된 음성 구간을 적절한 시작 위치에 오버레이
-    for fname in os.listdir(tts_dir):
+    wav_files = sorted(
+        f for f in os.listdir(tts_dir) if f.lower().endswith(".wav")
+    )
+    if not wav_files:
+        raise FileNotFoundError("TTS 오디오 파일이 존재하지 않습니다.")
+    for fname in wav_files:
         if fname.endswith(".wav"):
             segment_audio = AudioSegment.from_wav(str(tts_dir / fname))
             # 파일명 끝부분에 기록된 시작 시간을 파싱
