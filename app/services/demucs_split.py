@@ -16,12 +16,14 @@ def split_vocals(job_id: str):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # CUDA를 사용해 Demucs 두 스템(보컬/배경) 분리 실행
+    # mac 환경일 경우 CPU로 변경
     cmd = [
         "python3",
         "-m",
         "demucs.separate",
         "-d",
-        "cuda",
+        # "cuda",
+        "cpu",
         "-n",
         "htdemucs",
         "--two-stems",
