@@ -92,6 +92,7 @@ def run_asr(job_id: str):
     model = whisperx.load_model(
         "large-v2",
         device=device,
+        compute_type="int8", # mac 환경에 맞게 변경
         download_root=_whisperx_download_root("asr"),
     )  # 정확도를 위해 large 모델 사용
 
