@@ -31,6 +31,7 @@ class FullPipeline:
         self.user_voice_sample_path = payload.get("user_voice_sample_path")
         self.prompt_text_value = payload.get("prompt_text_value")
         self.prompt_text_value = self.prompt_text.strip() if self.prompt_text else None
+        # self.output_path = f"data/interim/vid/tts/{self.project_id}/{self.job_id}.mp4"
 
     def process(self):
         try:
@@ -81,19 +82,14 @@ class FullPipeline:
                 prompt_text_override=self.prompt_text_value,
             )
 
-            # output_path = mux_stage(job_id)
-            # meta = load_meta(workdir)
-            # self._prepare_segment_assets(project_id, job_id, meta)
-            # meta = load_meta(workdir)
-            # segments_payload = _build_segment_payload(meta, translations)
-            
             result_key = f"projects/{self.project_id}/outputs/videos/{self.job_id}.mp4"
             metadata_key = f"projects/{self.project_id}/outputs/metadata/{self.job_id}.json"
 
             logger.info("Uploading result video to s3://%s/%s", self.bucket, result_key)
 
-            self.s3.upload_file(output_path, self.bucket, result_key)
-            self.s3.put_object(
+            # TODO: output 파일 경로 수정
+            # self.s3_client.upload_file(output_path, self.bucket, result_key)
+            self.s3_client.put_object(
                 Bucket=self.bucket,
                 Key=metadata_key,
                 Body=json.dumps(

@@ -14,15 +14,6 @@ CALLBACK_LOCALHOST_HOST = os.getenv('JOB_CALLBACK_LOCALHOST_HOST', 'host.docker.
 PROFILE = os.getenv('AWS_PROFILE', 'dev')
 LOG_LEVEL = os.getenv("WORKER_LOG_LEVEL", "INFO")
 
-# self.result_meta_prefix = os.getenv(
-#     "JOB_RESULT_METADATA_PREFIX",
-#     "projects/{project_id}/outputs/metadata/{job_id}.json",
-# )
-# self.interim_segment_prefix = os.getenv(
-#     "JOB_INTERIM_SEGMENT_PREFIX",
-#     "projects/{project_id}/interim/{job_id}/segments",
-# )
-
 
 
 
