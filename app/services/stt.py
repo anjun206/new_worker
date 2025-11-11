@@ -86,7 +86,8 @@ def run_asr(job_id: str):
     vocals_audio_path = Path(demucs_result["vocals"])
 
     # 2. WhisperX 모델을 불러와 전사 수행
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu" # mac 환경일 경우 CPU로 변경
     logger.info("Loading WhisperX ASR model (device=%s)", device)
     model = whisperx.load_model(
         "large-v2",
