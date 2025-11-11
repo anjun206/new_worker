@@ -1,19 +1,15 @@
 # translate.py
 import json
 import shutil
-
 from config import get_job_paths
 from services.transcript_store import (
     COMPACT_ARCHIVE_NAME,
     load_compact_transcript,
     segment_views,
 )
-
-# 예시용으로 googletrans 사용 (실제 서비스에서는 공식 번역 API로 교체 필요)
 from googletrans import Translator
 
 translator = Translator()
-
 
 def translate_transcript(job_id: str, target_lang: str):
     """전사된 구간 텍스트를 지정한 언어로 번역합니다."""
