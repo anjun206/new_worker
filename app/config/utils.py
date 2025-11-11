@@ -1,7 +1,8 @@
 from typing import Optional, Dict, Any
 import requests
-from app.config import CALLBACK_LOCALHOST_HOST
+from app.config.env import CALLBACK_LOCALHOST_HOST
 from urllib.parse import urlparse, urlunparse
+import os
 
 class JobProcessingError(Exception):
     """Raised when a job fails irrecoverably during processing."""
@@ -60,3 +61,9 @@ def __normalize_callback_url(call_back_url) -> str:
             netloc = f"{host}:{parsed.port}"
         parsed = parsed._replace(netloc=netloc)
     return urlunparse(parsed)
+
+
+def ensure_workdir(job_id: str) -> str:
+    workdir = os.path.join("/app/data", job_id)
+    os.makedirs(workdir, exist_ok=True)
+    return workdir

@@ -5,6 +5,8 @@ import logging, time, requests, boto3, json
 from app.config import JobProcessingError
 from typing import Any, Dict, Optional
 from .pipeline.full_pipeline import FullPipeline
+from .pipeline.segment_tts import SegmentTTS
+from .pipeline.segment_mix import SegmentMix
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -22,19 +24,6 @@ class QueueWorker:
         self.visibility_timeout = VISIBILITY_TIMEOUT
         self.poll_wait = POLL_WAIT
         self.callback_localhost_host = CALLBACK_LOCALHOST_HOST
-        
-        self.result_video_prefix = os.getenv(
-            "JOB_RESULT_VIDEO_PREFIX",
-            "projects/{project_id}/outputs/videos/{job_id}.mp4",
-        )
-        self.result_meta_prefix = os.getenv(
-            "JOB_RESULT_METADATA_PREFIX",
-            "projects/{project_id}/outputs/metadata/{job_id}.json",
-        )
-        self.interim_segment_prefix = os.getenv(
-            "JOB_INTERIM_SEGMENT_PREFIX",
-            "projects/{project_id}/interim/{job_id}/segments",
-        )
         session_kwargs: dict = {}
         if PROFILE:
             session_kwargs["profile_name"] = PROFILE
@@ -88,28 +77,11 @@ class QueueWorker:
         task = (payload.get("task") or "full_pipeline").lower()
 
         if task == "full_pipeline":  # preTTS
-            self.__handle_full_pipeline(payload)
-        elif task == "segment_tts":
-            self._handle_segment_tts(payload)
-        elif task in {"segment_mix", "tts_bgm_mix"}:
-            self._handle_segment_mix(payload)
+            full_pipeline = FullPipeline(payload=payload)
+            full_pipeline.process()
             # 최종 TTS + mix -> 최종 결과물 나오는 ~ handle_최종 어쩌구 저쩌구(payload) 필요
         else:
             raise JobProcessingError(f"Unsupported task type: {task}")
-    
-    def __handle_full_pipeline(self, payload: Dict[str, Any]):
-        full_pipeline = FullPipeline(payload=payload)
-        full_pipeline.process()
-
-    def __handle_segment_tts(self):
-        pass
-
-    def __handle_segemnt_mix(self):
-        pass
-
-        
-
-
 
 if __name__ == "__main__":
     worker = QueueWorker()

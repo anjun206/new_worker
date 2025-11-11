@@ -1,20 +1,22 @@
 from typing import Any, Dict
 from app.config import JobProcessingError
 import os, logging
-from app.config import DEFAULT_TARGET_LANG, DEFAULT_SOURCE_LANG, LOG_LEVEL
-from app.config import post_status
+from app.config.env import DEFAULT_TARGET_LANG, DEFAULT_SOURCE_LANG, LOG_LEVEL
+from app.config.utils import post_status, ensure_workdir
 from app.services.stt import run_asr
 from app.services.translate import translate_transcript
 from app.services.tts import generate_tts
+from app.services.mux import mux_audio_video
+from app.services.sync import sync_segments
 import json
 from botocore.exceptions import BotoCoreError, ClientError
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
-
 
 class FullPipeline:
     def __init__(self, payload: Dict[str, Any]):
@@ -25,13 +27,12 @@ class FullPipeline:
         self.__validation_check()
         self.target_lang = payload.get("target_lang") or DEFAULT_TARGET_LANG
         self.source_lang = payload.get("source_lang") or DEFAULT_SOURCE_LANG
-        self.workdir = self.__ensure_workdir(self.job_id)
+        self.workdir = ensure_workdir(self.job_id)
         self.extension = os.path.splitext(self.input_key)[1]
         self.local_input = os.path.join(self.workdir, f"input{self.extension or '.mp4'}")
         self.user_voice_sample_path = payload.get("user_voice_sample_path")
         self.prompt_text_value = payload.get("prompt_text_value")
         self.prompt_text_value = self.prompt_text.strip() if self.prompt_text else None
-        # self.output_path = f"data/interim/vid/tts/{self.project_id}/{self.job_id}.mp4"
 
     def process(self):
         try:
@@ -56,12 +57,12 @@ class FullPipeline:
             post_status(self.callback_url, "in_progress", metadata={"stage": "mt_prepare"})
 
             translations = translate_transcript(self.job_id, self.target_lang)
+            
 
             meta["translations"] = translations
             # save_meta(workdir, meta)
 
             post_status(self.callback_url, "in_progress", metadata={"stage": "mt_completed"})
-
             post_status(
                 self.callback_url,
                 "in_progress",
@@ -81,14 +82,23 @@ class FullPipeline:
                 voice_sample_path=self.user_voice_sample_path,
                 prompt_text_override=self.prompt_text_value,
             )
+            try:
+                synced_segments = sync_segments(self.job_id)
+            except FileNotFoundError as exc:
+                logger.info("Skipping sync step due to missing inputs: %s", exc)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.warning("Sync step failed; continuing without synced segments: %s", exc)
+            else:
+                if synced_segments:
+                    segments_payload = synced_segments
 
             result_key = f"projects/{self.project_id}/outputs/videos/{self.job_id}.mp4"
             metadata_key = f"projects/{self.project_id}/outputs/metadata/{self.job_id}.json"
 
             logger.info("Uploading result video to s3://%s/%s", self.bucket, result_key)
 
-            # TODO: output 파일 경로 수정
-            # self.s3_client.upload_file(output_path, self.bucket, result_key)
+            output_path = mux_audio_video(self.job_id)
+            self.s3_client.upload_file(output_path, self.bucket, result_key)
             self.s3_client.put_object(
                 Bucket=self.bucket,
                 Key=metadata_key,
@@ -138,11 +148,6 @@ class FullPipeline:
             wrapped = JobProcessingError(str(exc))
             self._safe_fail(self.callback_url, wrapped)
             raise wrapped
-
-    def __ensure_workdir(self, job_id: str) -> str:
-        workdir = os.path.join("/app/data", job_id)
-        os.makedirs(workdir, exist_ok=True)
-        return workdir
     
     def __validation_check(self):
         if not all([self.job_id, self.project_id, self.input_key, self.self.callback_url]):
